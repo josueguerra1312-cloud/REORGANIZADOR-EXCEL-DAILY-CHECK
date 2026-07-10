@@ -4,9 +4,6 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
 
 
 st.set_page_config(
@@ -38,17 +35,6 @@ OUTPUT_COLUMNS = [
     "TOT_CYCLES",
     "CONTROL",
 ]
-
-
-HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
-HEADER_FONT = Font(color="FFFFFF", bold=True)
-
-GROUP_FILL = PatternFill("solid", fgColor="D9EAF7")
-CHECK_FILL = PatternFill("solid", fgColor="E2F0D9")
-DEFECT_FILL = PatternFill("solid", fgColor="FCE4D6")
-
-THIN_GRAY = Side(style="thin", color="D9E2F3")
-MEDIUM_BLUE = Side(style="medium", color="5B9BD5")
 
 
 def clean_col_name(value):
@@ -160,3 +146,15 @@ def transform_dataframe(df):
     work = df.copy()
     work["__original_order"] = range(len(work))
 
+    for column in ["ac", "wo", "eo", "pn", "sn"]:
+        if column not in work.columns:
+            work[column] = ""
+
+    category_data = work.apply(task_category, axis=1, result_type="expand")
+
+    work["__category_order"] = category_data[0]
+    work["category"] = category_data[1]
+    work["description_full"] = work.apply(build_description, axis=1)
+
+    work = work.sort_values(
+        by=["ac", "wo", "__category_order", "__original_order"],
