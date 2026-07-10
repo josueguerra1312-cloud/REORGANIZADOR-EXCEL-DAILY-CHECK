@@ -3,16 +3,13 @@ from pathlib import Path
 
 import streamlit as st
 
-
 st.set_page_config(
     page_title="Ordenador de Programa AC/WO",
     page_icon="✈️",
     layout="centered",
 )
 
-
 st.title("✈️ Ordenador de Programa AC/WO")
-
 st.write(
     "Sube tu archivo Excel y la app generará un nuevo archivo ordenado por "
     "matrícula AC y WO, con WEEKLY CHECK, DAILY CHECK, EO normales y defectos."
@@ -28,13 +25,12 @@ st.markdown(
 4. **Defectos / Non-Routines**
 
 La descripción usa siempre el texto completo de `EO_DESCRIPTION`.
-
 Si existen ambos campos `P/N` y `S/N`, se agregan al final de la descripción.
 """
 )
 
 uploaded_file = st.file_uploader(
-    "Sube tu archivo Excel",
+    "Sube tu archivo Excel (.xls o .xlsx)",
     type=["xls", "xlsx"],
 )
 
@@ -42,4 +38,8 @@ if uploaded_file is None:
     st.info("Carga un archivo para comenzar.")
 else:
     st.success(f"Archivo cargado: {uploaded_file.name}")
+
+    if st.button("Generar Excel ordenado", type="primary"):
+        try:
+            from processor import process_file
 
