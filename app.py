@@ -1,69 +1,152 @@
 from __future__ import annotations
 
-import tempfile
+import argparse
+import re
 from pathlib import Path
+from typing import BinaryIO, Iterable, Tuple
 
-import streamlit as st
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
-from processor import process_file
 
-st.set_page_config(
-    page_title="Ordenador de Programa AC/WO",
-    page_icon="✈️",
-    layout="centered",
-)
+REQUIRED_COLUMNS = ["ac", "wo", "eo", "eo_description"]
 
-st.title("✈️ Ordenador de Programa AC/WO")
-st.caption(
-    "Agrupa por matrícula y WO, ordena WEEKLY, DAILY, EO normales y defectos, "
-    "y genera un Excel profesional."
-)
+OUTPUT_COLUMNS = [
+    "AC",
+    "WO",
+    "EO",
+    "DESCRIPTION",
+    "P/N",
+    "S/N",
+    "CATEGORY",
+    "MODIFIED_DATE",
+    "AC_TYPE",
+    "AC_SERIES",
+    "REMAINING_HOURS",
+    "REMAINING_MINUTES",
+    "REMAINING_CYCLES",
+    "REMAINING_DAYS",
+    "COMP_HOURS",
+    "TOT_HOURS",
+    "TOT_CYCLES",
+    "CONTROL",
+]
 
-st.markdown(
-    """
-### Instrucciones
-1. Sube tu archivo **.xls** o **.xlsx** exportado del sistema.
-2. Presiona **Generar Excel ordenado**.
-3. Descarga el archivo final.
 
-La descripción se arma con el texto completo de `EO_DESCRIPTION` y solo agrega `P/N` + `S/N` cuando ambos existen.
-"""
-)
+HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
+HEADER_FONT = Font(color="FFFFFF", bold=True)
+GROUP_FILL = PatternFill("solid", fgColor="D9EAF7")
+DEFECT_FILL = PatternFill("solid", fgColor="FCE4D6")
+CHECK_FILL = PatternFill("solid", fgColor="E2F0D9")
 
-uploaded_file = st.file_uploader("Sube el Excel a ordenar", type=["xls", "xlsx"])
+THIN_GRAY = Side(style="thin", color="D9E2F3")
+MEDIUM_BLUE = Side(style="medium", color="5B9BD5")
 
-if uploaded_file is None:
-    st.warning("Sube un archivo para comenzar.")
-else:
-    st.info(f"Archivo cargado: {uploaded_file.name}")
 
-    if st.button("Generar Excel ordenado", type="primary"):
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmpdir_path = Path(tmpdir)
-                input_path = tmpdir_path / uploaded_file.name
-                output_path = tmpdir_path / f"{Path(uploaded_file.name).stem}_ordenado.xlsx"
+def clean_col_name(value: object) -> str:
+    return str(value).strip().lower().replace(" ", "_")
 
-                input_path.write_bytes(uploaded_file.getvalue())
 
-                process_file(
-                    input_file=input_path,
-                    output_path=output_path,
-                    filename=uploaded_file.name,
-                )
+def is_blank(value: object) -> bool:
+    if pd.isna(value):
+        return True
+    return str(value).strip() == ""
 
-                st.success("Listo. Tu archivo fue generado correctamente.")
 
-                st.download_button(
-                    label="Descargar Excel ordenado",
-                    data=output_path.read_bytes(),
-                    file_name=output_path.name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+def text(value: object) -> str:
+    if is_blank(value):
+        return ""
+    return str(value).strip()
 
-        except Exception as exc:
-            st.error(
-                "No se pudo procesar el archivo. "
-                "Revisa que el Excel tenga las columnas requeridas."
-            )
-            st.exception(exc)
+
+def normalize_task(value: object) -> str:
+    return re.sub(r"\s+", " ", text(value).upper())
+
+
+def read_program_file(
+    uploaded_file: str | Path | BinaryIO,
+    filename: str | None = None,
+) -> pd.DataFrame:
+    name = filename or getattr(uploaded_file, "name", "") or str(uploaded_file)
+    suffix = Path(name).suffix.lower()
+
+    if suffix == ".xls":
+        engine = "xlrd"
+    elif suffix == ".xlsx":
+        engine = "openpyxl"
+    else:
+        raise ValueError("Formato no soportado. Sube un archivo .xls o .xlsx")
+
+    df = pd.read_excel(uploaded_file, engine=engine)
+    df.columns = [clean_col_name(c) for c in df.columns]
+
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"Faltan columnas requeridas: {', '.join(missing)}")
+
+    return df
+
+
+def build_full_description(row: pd.Series) -> str:
+    desc = text(row.get("eo_description"))
+    pn = text(row.get("pn"))
+    sn = text(row.get("sn"))
+
+    if pn and sn:
+        pn_sn = f"P/N: {pn} | S/N: {sn}"
+        if desc:
+            desc = f"{desc}\n{pn_sn}"
+        else:
+            desc = pn_sn
+
+    return desc
+
+
+def is_defect(row: pd.Series) -> bool:
+    control = normalize_task(row.get("control"))
+
+    defect_cols = [
+        "wo_task_card_defect",
+        "wo_task_card_non_routine",
+        "wo_task_card_defect_type",
+        "wo_task_card_defect_item",
+        "wo_task_card_task_card",
+        "wo_task_card_description",
+    ]
+
+    has_defect_data = False
+
+    for col in defect_cols:
+        if col in row.index and not is_blank(row.get(col)):
+            has_defect_data = True
+            break
+
+    return control == "Y" or has_defect_data
+
+
+def task_category(row: pd.Series) -> Tuple[int, str]:
+    eo = normalize_task(row.get("eo"))
+    desc = normalize_task(row.get("eo_description"))
+
+    if is_defect(row):
+        return 4, "DEFECT"
+
+    if eo == "WEEKLY CHECK" or desc == "WEEKLY CHECK":
+        return 1, "WEEKLY CHECK"
+
+    if eo == "DAILY CHECK" or desc == "DAILY CHECK":
+        return 2, "DAILY CHECK"
+
+    return 3, "EO"
+
+
+def transform(df: pd.DataFrame) -> pd.DataFrame:
+    work = df.copy()
+    work["__original_order"] = range(len(work))
+
+    for col in ["ac", "wo", "eo", "pn", "sn"]:
+        if col not in work.columns:
+            work[col] = ""
+
