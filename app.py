@@ -3,7 +3,7 @@ from procesador import procesar_excel
 
 
 st.set_page_config(
-    page_title="Ordenador de Programa de Mantenimiento",
+    page_title="Ordenador Daily Check",
     page_icon="✈️",
     layout="centered",
 )
