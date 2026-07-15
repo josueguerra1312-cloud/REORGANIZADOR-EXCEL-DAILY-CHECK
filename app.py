@@ -9,7 +9,7 @@ st.set_page_config(
 )
 
 
-st.title("✈️ Ordenador de Programa de Mantenimiento")
+st.title("Ordenador Daily Check")
 
 st.write(
     """
